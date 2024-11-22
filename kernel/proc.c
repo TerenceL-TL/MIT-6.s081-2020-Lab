@@ -294,6 +294,7 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+  np->mask = p->mask;
 
   release(&np->lock);
 
@@ -633,6 +634,13 @@ kill(int pid)
     release(&p->lock);
   }
   return -1;
+}
+
+int trace(int mask)
+{
+  struct proc* proc = myproc();
+  proc->mask = mask;
+  return 0;
 }
 
 // Copy to either a user address, or kernel address,
