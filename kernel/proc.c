@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sysinfo.h"
 
 struct cpu cpus[NCPU];
 
@@ -636,11 +637,38 @@ kill(int pid)
   return -1;
 }
 
-int trace(int mask)
+int 
+trace(int mask)
 {
   struct proc* proc = myproc();
   proc->mask = mask;
   return 0;
+}
+
+int 
+sysinfo(uint64 addr)
+{
+  struct sysinfo info;
+  struct proc* p = myproc();
+  info.freemem = count_free_pages() * PGSIZE;
+  info.nproc = count_unused_proc();
+  if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+      return -1;
+  return 0;
+}
+
+int 
+count_unused_proc()
+{
+  struct proc* pp;
+  int cnt = 0;
+  for(pp = proc; pp < &proc[NPROC]; pp++)
+  {
+    acquire(&pp->lock);
+    if(pp->state != UNUSED) cnt += 1;
+    release(&pp->lock);
+  }
+  return cnt;
 }
 
 // Copy to either a user address, or kernel address,

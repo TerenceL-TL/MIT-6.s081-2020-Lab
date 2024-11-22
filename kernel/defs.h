@@ -8,6 +8,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct sysinfo;
 
 // bio.c
 void            binit(void);
@@ -63,6 +64,7 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int             count_free_pages(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -90,6 +92,8 @@ pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
 int             kill(int);
 int             trace(int);
+int             sysinfo(uint64);
+int             count_unused_proc(void);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
