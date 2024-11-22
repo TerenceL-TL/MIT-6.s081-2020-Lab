@@ -1,0 +1,19 @@
+Page 0: Usually unmapped. It's left invalid to catch null pointer dereferences.
+Page 1: Reserved for trap frames or other kernel-use purposes (may also be invalid in many cases).
+Page 2 and higher: These pages map the user-space memory, including text, data, stack, and heap.
+
+1. What does page 0 contain?
+Page 0 typically contains nothing—it is unmapped. This serves as a safety mechanism to catch dereferencing of null pointers. Any attempt to access address 0 (or page 0) will result in a page fault.
+
+2. What is in page 2?
+Page 2 is the start of the user process's memory. In xv6's memory layout, this page often contains the beginning of the process's code segment (text) or data segment. For instance:
+- The text section contains the executable instructions of the program.
+- The data section includes global variables initialized at runtime.
+If you examine the page table entries (vmprint output), page 2 is typically mapped to a physical frame with read and execute permissions (for code).
+
+3. Can a user-mode process read/write the memory mapped by page 1?
+No, in user mode, a process cannot read or write memory mapped by page 1. This is because:
+
+Page 1 is typically mapped with kernel-only access permissions (i.e., it is not user-accessible). Alternatively, page 1 may also be left unmapped, depending on how the kernel uses it.
+If page 1 is valid, it's reserved for kernel purposes, such as the trap frame when transitioning between user and kernel modes. These mappings are not accessible from user space.
+If a user-mode process tries to access page 1, it will trigger a page fault due to insufficient privileges.
