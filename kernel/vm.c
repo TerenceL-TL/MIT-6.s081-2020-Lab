@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -45,6 +47,40 @@ kvminit()
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+/*
+ * create a direct-map page table for the kernel.
+ */
+pagetable_t
+u_kvminit()
+{
+  pagetable_t k_pagetable = (pagetable_t) kalloc();
+  memset(k_pagetable, 0, PGSIZE);
+
+  // uart registers
+  u_kvmmap(k_pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  u_kvmmap(k_pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // // CLINT
+  // kvmmap(k_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  u_kvmmap(k_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  u_kvmmap(k_pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  u_kvmmap(k_pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  u_kvmmap(k_pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  return k_pagetable;
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -117,8 +153,19 @@ walkaddr(pagetable_t pagetable, uint64 va)
 void
 kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
 {
+  // printf("kernel: %p\n", kernel_pagetable);
   if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
+}
+
+// add a mapping to the proc's kernel page table.
+// does not flush TLB or enable paging.
+void
+u_kvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  // printf("kernel proc: %p\n", pagetable);
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
+    panic("u_kvmmap");
 }
 
 // translate a kernel virtual address to
@@ -132,7 +179,7 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->k_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -150,6 +197,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
+  // printf("mpage: %p\n", pagetable);
 
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
@@ -175,6 +223,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
+  // printf("uvmunmap: %p\n", pagetable);
 
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
@@ -289,6 +338,22 @@ freewalk(pagetable_t pagetable)
   kfree((void*)pagetable);
 }
 
+void
+u_k_freewalk(pagetable_t pagetable)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      pagetable[i] = 0;
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+        uint64 child = PTE2PA(pte);
+        u_k_freewalk((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)pagetable);
+}
+
 // Free user memory pages,
 // then free page-table pages.
 void
@@ -379,6 +444,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  // return copyin_new(pagetable, dst, srcva, len);
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -474,3 +540,9 @@ int vmprint(pagetable_t pagetable)
   }
   return 0;
 }
+
+// void
+// sync_pagetable(pagetable_t oldpgtbl, pagetable_t newpgtbl)
+// {
+
+// }
