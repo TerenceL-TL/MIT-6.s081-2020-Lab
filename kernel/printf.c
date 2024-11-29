@@ -121,6 +121,7 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +132,18 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+backtrace()
+{
+  // for xv6 the stack comes from top to bottom, so the larger address is the stack bottom but memory top.
+  uint64 pframe = r_fp();
+  uint64 stacktop = PGROUNDUP(pframe);
+  printf("backtrace:\n");
+  while(pframe < stacktop)
+  {
+    printf("%p\n", *((uint64*)(pframe - 8))); // minus 8 is byte, can be written as (uint64*)pframe - 1
+    pframe = *((uint64*)(pframe - 16));
+  }
 }

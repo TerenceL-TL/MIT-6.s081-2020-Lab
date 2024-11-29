@@ -1,0 +1,6 @@
+1. They are put in registers a0-a5, where in this case, the number 13 is placed in the register a2, indicating the third parameter.
+2. It's hidden, and the compiler seems to have complete the calculation of f and g, and make instruction "li a1, 12". 12 is the result of the function.
+3. It's placed in 0000000000000628 <printf>:
+4. I think that's 0x38 since there's a pc+4 into ra after the jalr. However when looking for the printf, it's 4 bytes smaller.
+5. He110 World, 0x726c6400, no change for 57616.
+6. print the value of a2 register.
