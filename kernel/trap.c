@@ -15,6 +15,7 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+void pagefault_handler();
 
 void
 trapinit(void)
@@ -67,12 +68,44 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 13 || r_scause() == 15) {
+    //pagefault
+    struct proc* p = myproc();
+    uint64 va = r_stval();
+    // printf("Handle pgf: %p\n", va);
+
+    if(va >= p->sz || va < PGROUNDUP(p->trapframe->sp)) // va larger than sz, or lower than the stacknkn
+    {
+      p->killed = 1;
+      goto end;
+    }
+    va = PGROUNDDOWN(va);
+
+    // alloc and map
+    char* pa;
+    pa = kalloc();
+    if(pa == 0)
+    {
+      // printf("pa: %p\n", pa);
+      // panic("pagefault handler: fail to alloc for lost pages");
+      p->killed = 1;
+      goto end;
+    }
+
+    memset(pa, 0, PGSIZE);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)pa, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(pa);
+      // panic("pagefault handler: fail to map for lost pages");
+      p->killed = 1;
+      goto end;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
 
+  end:
   if(p->killed)
     exit(-1);
 
