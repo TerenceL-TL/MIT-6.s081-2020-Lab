@@ -16,6 +16,8 @@ void kernelvec();
 
 extern int devintr();
 
+int cow_handler();
+
 void
 trapinit(void)
 {
@@ -67,6 +69,9 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 15) { // write page fault
+    if(cow_handler() != 0)
+      p->killed = -1;
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -216,5 +221,48 @@ devintr()
   } else {
     return 0;
   }
+}
+
+int
+cow_handler()
+{
+  uint64 va;
+  struct proc* p;
+  pte_t* pte;
+  uint64 pa, mem;
+
+  va = r_stval();
+  if(va > MAXVA) return -1;
+
+  p = myproc();
+
+  pte = walk(p->pagetable, va, 0);
+
+  if(pte == 0) return -1;
+  if((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+  {
+    printf("Cow: not valid pte for user\n");
+    return -1;
+  }
+
+  pa = PTE2PA(*pte);
+  mem = (uint64)kalloc();
+  if(mem == 0)
+  {
+    // printf("Cow: kalloc failed\n");
+    return -1;
+  }
+
+  memmove((void*)mem, (void*)pa, PGSIZE);
+
+  *pte |= PTE_W;
+  int flag = PTE_FLAGS(*pte);
+
+  // printf("trap map\n");
+  *pte = PA2PTE(mem) | flag;
+
+  kfree((void*)pa);
+
+  return 0;
 }
 
