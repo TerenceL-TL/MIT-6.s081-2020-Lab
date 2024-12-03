@@ -287,10 +287,13 @@ uint64
 sys_open(void)
 {
   char path[MAXPATH];
+  uint iprecord[MAXSYMLINK];
+  char target[MAXPATH];
   int fd, omode;
   struct file *f;
   struct inode *ip;
   int n;
+  int i;
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
@@ -320,6 +323,48 @@ sys_open(void)
     iunlockput(ip);
     end_op();
     return -1;
+  }
+
+  
+  i = 0;
+  while(ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0)
+  {
+    iprecord[i] = ip->inum;
+    if(readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0) {
+      printf("open: open symlink failed\n");
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    iunlockput(ip);
+
+    // printf("%s\n", target);
+    
+    if((ip = namei(target)) == 0) {
+      printf("open: path \"%s\" is not exist\n", target);
+      end_op();
+      return -1;
+    }
+
+    for(int j = 0; j <= i; j++)
+    {
+      if(ip->inum == iprecord[i])
+      {
+        printf("open: symlink circulate\n");
+        end_op();
+        return -1;
+      }
+    }
+    ilock(ip);
+
+    if(i >= MAXSYMLINK)
+    {
+      printf("open: symlink overflow maxiter\n");
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    i++;
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -482,5 +527,39 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH], path[MAXPATH];
+  memset(target, 0, sizeof(target));
+  memset(path, 0, sizeof(path));
+  struct inode *ip;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+
+  if((ip = namei(path)) != 0){ // exists
+    end_op();
+    return -1;
+  }
+
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0) { // cannot create
+    end_op();
+    return -1;
+  }
+
+  if(writei(ip, 0, (uint64)target, 0, sizeof(target)) != sizeof(target)) { // cannot write
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
   return 0;
 }
