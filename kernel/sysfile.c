@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,158 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_mmap()
+{
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  int i;
+  struct file* file;
+  struct proc* p;
+
+  if(argaddr(0, &addr) < 0)    return -1;
+  if(argint(1, &length) < 0)   return -1;
+  if(argint(2, &prot) < 0)     return -1;
+  if(argint(3, &flags) < 0)    return -1;
+  if(argfd(4, &fd, &file) < 0) return -1;
+  if(argint(5, &offset) < 0)   return -1;
+
+  p = myproc();
+
+  if(flags & MAP_SHARED && flags & MAP_PRIVATE)
+  {
+    return -1;
+  } // flag should be atomatic
+
+  if(flags & MAP_SHARED)
+  {
+     // if the file is not writeble and actually can be written, return -1
+    if(!file->writable && (prot & PROT_WRITE) )
+    {
+      return -1;
+    }
+  }
+  if (!file->readable && (prot & PROT_READ)) 
+  {
+    return -1;
+  }
+  
+  // assume that addr = 0, alloc by kernel
+  addr = MMAPEND; // non-valid
+  for(i = 0; i < NVMA; i++)
+  {
+    if(p->vmas[i].busy)
+    {
+      addr = addr > p->vmas[i].addr ? p->vmas[i].addr : addr; // min
+    }
+  }
+
+  // find a free vma block
+  for(i = 0; i < NVMA; i++)
+  {
+    if(p->vmas[i].busy == 0)
+    {
+      break;
+    }
+  }
+
+  if(i == NVMA) return -1;
+
+  p->vmas[i].addr = PGROUNDDOWN(addr - length);
+  p->vmas[i].length = PGROUNDUP(length);
+  p->vmas[i].flags = flags;
+  p->vmas[i].prot = prot;
+  p->vmas[i].fd = fd;
+  p->vmas[i].offset = offset;
+  p->vmas[i].file = file;
+  p->vmas[i].busy = 1;
+
+  filedup(file);
+
+  p->sz += length;
+
+  return p->vmas[i].addr;
+}
+
+uint64
+sys_munmap()
+{
+  uint64 addr;
+  int length;
+  int i;
+  struct proc* p;
+  struct vma* pvma = 0;
+
+  if(argaddr(0, &addr) < 0)    return -1;
+  if(argint(1, &length) < 0)   return -1;
+
+  p = myproc();
+
+  for(i = 0; i < NVMA; i++)
+  {
+    uint64 sa = p->vmas[i].addr;
+    uint64 ea = p->vmas[i].addr + p->vmas[i].length;
+    if(p->vmas[i].busy && sa <= addr && ea > addr)
+    {
+      pvma = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(pvma == 0)
+  {
+    return -1;
+  }
+
+  if(length == 0)
+  {
+    return 0;
+  }
+
+  if(addr > pvma->addr && addr + length < pvma->addr + pvma->length)
+  {
+    return -1; // allow to unmap at two sides only
+  }
+
+  addr = PGROUNDDOWN(addr);
+  length = PGROUNDUP(length);
+
+  if (pvma->flags & MAP_SHARED) {
+    for (uint64 va = addr; va < addr + length; va += PGSIZE) 
+    {
+      pte_t *pte = walk(p->pagetable, va, 0);
+      int flags = PTE_FLAGS(*pte);
+      if (flags & PTE_D) 
+      {
+        filewrite(pvma->file, va, PGSIZE);
+      }
+    }
+  }
+
+  uvmunmap(p->pagetable, addr, length / PGSIZE, 1);
+
+  if (addr == pvma->addr && length == pvma->length) 
+  {
+    pvma->busy = 0;
+    fileclose(pvma->file);
+  }
+  else if (addr == pvma->addr) 
+  {
+    pvma->addr += length;
+    pvma->length -= length;
+    pvma->offset += length;
+  } 
+  else if(addr + length == pvma->addr + pvma->length) 
+  {
+    pvma->length -= length;
+  } 
+  else 
+  {
+    panic("munmap range error\n");
+  }
+
   return 0;
 }

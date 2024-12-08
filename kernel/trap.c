@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,12 +71,77 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 12 || r_scause() == 13 || r_scause() == 15){ // execute/read/load
+    uint64 va = r_stval();
+    uint64 pa;
+    struct vma* pvma = 0;
+    int i;
+
+    if (va > MAXVA)
+    {
+      p->killed = 1;
+      goto end;
+    }
+
+    for(i = 0; i < NVMA; i++)
+    {
+      uint64 sa = p->vmas[i].addr;
+      uint64 ea = p->vmas[i].addr + p->vmas[i].length;
+      if(p->vmas[i].busy && sa <= va && ea > va)
+      {
+        pvma = &p->vmas[i];
+        break;
+      }
+    }
+
+    if(!pvma)
+    {
+      p->killed = 1;
+      goto end;
+    }
+
+    struct file* file = pvma->file;
+    va = PGROUNDDOWN(va);
+    pa = (uint64)kalloc();
+
+    if(pa == 0)
+    {
+      p->killed = 1;
+      goto end;
+    }
+
+    memset((void*)pa, 0, PGSIZE);
+    
+    ilock(file->ip);
+    if(readi(file->ip, 0, pa, va - pvma->addr + pvma->offset, PGSIZE) == 0)
+    {
+      iunlock(file->ip);
+      p->killed = 1;
+      goto end;
+    }
+    iunlock(file->ip);
+
+    int perm = PTE_U | PTE_V;
+    if (pvma->prot & PROT_READ)
+        perm |= PTE_R;
+    if (pvma->prot & PROT_WRITE) 
+        perm |= PTE_W;
+    if (pvma->prot & PROT_EXEC)   
+        perm |= PTE_X;
+
+    if (mappages(p->pagetable, va, PGSIZE, pa, perm) < 0) {
+      kfree((void*)pa);
+      p->killed = 1;
+      goto end;
+    }
+
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
 
+end:
   if(p->killed)
     exit(-1);
 

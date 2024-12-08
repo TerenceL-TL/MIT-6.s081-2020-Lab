@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "memory": "c",
+        "param.h": "c",
+        "string_view": "c"
+    }
+}
